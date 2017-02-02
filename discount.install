@@ -1,0 +1,361 @@
+<?php
+
+/**
+ * @file
+ * discount install file
+ */
+
+/**
+ * Default currency.
+ */
+define('discount_DEFAULT_CURRENCY', 'USD');
+
+/**
+ * Default VAT state (enabled/disabled). 
+ */
+define('discount_VAT_STATE', FALSE);
+
+/**
+ * Default VAT value. Zero by default.
+ */
+define('discount_VAT_VALUE', '');
+
+/**
+ * Implements hook_install().
+ */
+function discount_install() {
+  $t = get_t();
+
+  // Setting up the default currency.
+  variable_set('discount_currency', discount_DEFAULT_CURRENCY);
+
+  // Setting up the default messages.
+  variable_set('discount_admin_subject', $t('New order placed'));
+  $default_admin_message = $t('Hi,
+An order was placed by [node:title] ([node:field_email]
+Ordered products:
+[discount_order:products]
+Total price: [node:field_total_price]');
+  variable_set('discount_admin_message', $default_admin_message);
+
+  variable_set('discount_send_user_message', 1);
+  variable_set('discount_user_subject', $t('New order placed'));
+  $default_user_message = $t('Hi,
+You just placed an order on the website @sitename. Here are the order details:
+[discount_order:products]
+Total price: [node:field_total_price]
+We will contact you as soon as possible.', array('@sitename' => variable_get('site_name')));
+  variable_set('discount_user_message', $default_user_message);
+
+  $default_thank_you_title = $t("Thank you.");
+  variable_set('discount_thank_you_title', $default_thank_you_title);
+
+  $default_thank_you_message = $t("Thank you for placing an order on our website.\nWe will contact you as soon as possible.");
+  variable_set('discount_thank_you_message', $default_thank_you_message);
+  
+  // Redirect url after add to cart.
+  variable_set('discount_redirect_user_after_add_to_cart', '<none>');
+  
+  foreach (discount_get_fields() as $field_name => $field_) {
+    // Check to see if the field field already exists.
+    $field = field_info_field($field_name);
+    // If the field does not exist then create it.
+    if (empty($field)) {
+      $field = array(
+        'field_name' => $field_name,
+        'type' => $field_['type'],
+        'entity_types' => array('node'),
+      );
+      field_create_field($field);
+    }
+  }
+  
+  // Setting the VAT default state and value.
+  variable_set('discount_vat_state', discount_VAT_STATE);
+  variable_set('discount_vat_value', discount_VAT_VALUE);
+
+  node_types_rebuild();
+  $types = node_type_get_types();
+  node_add_body_field($types['product']);
+//  foreach (_discount_installed_fields() as $field) {
+//      field_create_field($field);
+//  }
+//
+//  foreach (_discount_installed_instances() as $instance) {
+//      field_create_instance($instance);
+//  }
+}
+
+//function _discount_installed_fields() {
+//  $t = get_t();
+//  return array(
+//    'title' => array(
+//      'field_name' => 'title',
+//      'cardinality' => 1,
+//      'type'        => 'text',
+//    ),
+//  );
+//}
+//
+//function _discount_installed_instances() {
+//  $t = get_t();
+//  return array(
+//    'title' => array(
+//      'field_name' => 'title',
+//      'type' => 'text',
+//      'label'       => $t('Title'),
+//      'bundle' => 'product',
+//      'entity_type' => 'node',
+//      'widget'      => array(
+//        'type'    => 'text_textfield',
+//      ),
+//      'display' => array(
+//        'default' => array(
+//            'label' => 'above',
+//            'type' => 'text',
+//        ),
+//      ),
+//    ),
+//  );
+//}
+
+/**
+ * Implements hook_uninstall().
+ */
+function discount_uninstall() {
+  // Currency.
+  variable_del('discount_currency');
+  // Delete the price field.
+  $types = variable_get('discount_content_types');
+  if (is_array($types)) {
+    drupal_load('module', 'discount');
+    // Foreach selected content type, delete the price field.
+    foreach ($types as $type => $checked) {
+      if (!empty($checked)) {
+        foreach (discount_get_fields() as $field_name => $field_) {
+          // Price instance.
+          $instance = array(
+            'field_name' => $field_name,
+            'entity_type' => 'node',
+            'bundle' => $type,
+          );
+          field_delete_instance($instance);
+        }
+      }
+    }
+  }
+  
+  // Delete the content types from the variables table.
+  variable_del('discount_content_types');
+  // Admin confirmation mail.
+  variable_del('discount_admin_subject');
+  variable_del('discount_admin_message');
+  // User confirmation email.
+  variable_del('discount_user_subject');
+  variable_del('discount_user_message');
+  variable_del('discount_send_user_message');
+  // Thank you messages.
+  variable_del('discount_thank_you_title');
+  variable_del('discount_thank_you_message');
+  // Redirect user after add to cart action.
+  variable_del('discount_redirect_user_after_add_to_cart');
+  // VAT default state and value.
+  variable_del('discount_vat_state');
+  variable_del('discount_vat_value');
+
+  $ournewtype = 'product';
+  $sql = 'SELECT nid FROM {node} n WHERE n.type = :type';
+  $result = db_query($sql, array(':type' => $ournewtype));
+  $nodeids = array();
+  foreach ($result as $row) {
+      $nodeids[] = $row->nid;
+  }
+  node_delete_multiple($nodeids);
+//  delete_custom_fields();
+  node_type_delete($ournewtype);
+//  field_purge_batch(500);
+}
+
+//function delete_custom_fields() {
+//  foreach (array_keys(_discount_installed_fields()) as $field) {
+//    field_delete_field($field);
+//  }
+//  $instances = field_info_instances('node', 'product');
+//  foreach ($instances as $instance_name => $fieldinstance) {
+//    field_delete_instance($fieldinstance);
+//  }
+//}
+
+/**
+ * Adding discount new features (price, currency).
+ */
+function discount_update_7200() {
+  // Setting up the default currency.
+  variable_set('discount_currency', discount_DEFAULT_CURRENCY);
+  // Check to see if the price field already exists.
+  $field = field_info_field('price');
+  // If the price field does not exist then create it.
+  if (empty($field)) {
+    $field = array(
+      'field_name' => 'price',
+      'type' => 'number_decimal',
+      'entity_types' => array('node'),
+    );
+    field_create_field($field);
+  }
+
+  // Getting the content types for which we have discount active.
+  $node_types = variable_get('discount_content_types');
+  if (is_array($node_types)) {
+    // Setting up the price field for the selected content types.
+    foreach ($node_types as $type => $checked) {
+      // If a node type is checked, then create the price field.
+      if ($checked) {
+        // Foreach checked content type, we must assign the price field to the content type.
+        $instance = field_info_instance('node', 'price', $type);
+        if (empty($instance)) {
+          $instance = array(
+            'field_name' => 'price',
+            'label' => t('Price'),
+            'description' => t('Please enter the price for this item.'),
+            'entity_type' => 'node',
+            'bundle' => $type,
+          );
+          // It doesn't exist. Create it.
+          field_create_instance($instance);
+        }
+      }
+      // If not, then delete the price field.
+      else {
+        $instance = field_info_instance('node', 'price', $type);
+        if (!empty($instance)) {
+          field_delete_instance($instance);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Updating the price field to number_decimal instead of text. 
+ */
+function discount_update_7201() {
+  $product_types = discount_product_types();
+  if (!empty($product_types)) {
+    $backup_products = array();
+    // Taking each content type.
+    foreach ($product_types as $product_type => $is_active) {
+      if (!empty($is_active)) {
+        // Taking each product and storing it's initial value.
+        $query = db_select('node', 'n')->fields('n', array('nid'));
+        $products = $query->condition('type', $product_type, '=')->execute()->fetchAll();
+        
+        if (!empty($products) && is_array($products)) {
+          foreach ($products as $i => $node) {
+            $node = node_load($node->nid);
+            $backup_products[$product_type][$node->nid] = $node;
+          }
+        }
+      }
+    }
+    // Now deleting the price field.
+    field_delete_field('price');
+    // Using field_purge_batch() to actually delete the field.
+    field_purge_batch(10);
+    // Creating the new field with the right type property.
+    $field = array(
+      'field_name' => 'price',
+      'type' => 'number_decimal',
+      'entity_types' => array('node'),
+    );
+    field_create_field($field);
+    
+    // Restoring the content type instance and the node's initial value.
+    if (!empty($backup_products)) {
+      foreach ($backup_products as $product_type => $nodes) {
+        // Restoring the field instance.
+        $instance = array(
+          'field_name' => 'price',
+          'label' => t('Price'),
+          'description' => t('Please enter the price for this item.'),
+          'entity_type' => 'node',
+          'bundle' => $product_type,
+        );
+        field_create_instance($instance);
+        // Restoring the node's initial value.
+        foreach ($nodes as $nid => $node) {
+          node_save($node);
+        }
+      }
+    }
+  }
+  
+  // Redirect url after add to cart.
+  variable_set('discount_redirect_user_after_add_to_cart', '<none>');
+  
+  // Setting the VAT default state and value.
+  variable_set('discount_vat_state', discount_VAT_STATE);
+  variable_set('discount_vat_value', discount_VAT_VALUE);
+}
+
+/**
+ * Adding the latest fields, in case they aren't already there.
+ */
+function discount_update_7202() {
+  
+  // Adding the add to cart and/or price field.
+  foreach (discount_get_fields() as $field_name => $field_) {
+    // Check to see if the field field already exists.
+    $field = field_info_field($field_name);
+    // If the field does not exist then create it.
+    if (empty($field)) {
+      $field = array(
+        'field_name' => $field_name,
+        'type' => $field_['type'],
+        'entity_types' => array('node'),
+      );
+      field_create_field($field);
+    }
+  }
+  
+  // Getting the available content types.
+  $content_types = discount_product_types();
+  
+  // Creating the field instances.
+  if (!empty($content_types) && is_array($content_types)) {
+    foreach ($content_types as $type => $checked) {  
+      // If a node type is checked, then create the price field.
+      if ($checked) {
+        // Save content_type as a product.
+        $product_types[$type] = $type;
+        
+        foreach (discount_get_fields() as $field_name => $field_) {
+          // Foreach checked content type, we must assign the price field to the content type.
+          $instance = field_info_instance('node', $field_name, $type);
+
+          if (empty($instance)) {
+            $instance = array(
+              'field_name' => $field_name,
+              'label' => $field_['title'],
+              'description' => $field_['description'],
+              'entity_type' => 'node',
+              'bundle' => $type,
+            );
+            // It doesn't exist. Create it.
+            field_create_instance($instance);
+          }
+        }
+      }
+      // If not, then delete the instance.
+      else {
+        foreach (discount_get_fields() as $field_name => $field_) {
+          $instance = field_info_instance('node', $field_name, $type);
+          if (!empty($instance)) {
+            field_delete_instance($instance);
+          }
+        }
+      }
+    }
+  }
+  
+}
